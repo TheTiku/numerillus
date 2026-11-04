@@ -27,10 +27,23 @@ Las PWA necesitan HTTPS, así que hay que publicar la carpeta en un hosting est�
 - **Android (Chrome):** menú ⋮ → «Instalar aplicación».
 
 ## Sobre las notificaciones
-Una web app no puede programar avisos exactos con la app cerrada. Numerillus avisa al abrirla
-(o si está abierta) cuando ya pasó la hora y no has apuntado nada; en Android instalada usa además
-sincronización periódica en segundo plano. Para un aviso exacto todos los días, usa
-**Ajustes → Añadir aviso al calendario**.
+Los recordatorios diarios llegan como **notificaciones push** desde un pequeño servidor en
+Cloudflare Workers (`push-server/`), gratuito:
+- Al activar «Recordatorio diario», el móvil se suscribe y el servidor guarda solo la suscripción,
+  la hora y la zona horaria (ningún dato de gastos).
+- Cada 5 minutos el servidor envía el aviso a quien ya haya llegado a su hora, salvo que ese día
+  ya haya apuntado algo (la app se lo comunica).
+- En iPhone hace falta iOS 16.4+ y abrir la app desde el icono de la pantalla de inicio.
+
+Si no hay conexión con el servidor, la app avisa solo cuando está abierta. Alternativa siempre
+fiable: **Ajustes → Añadir aviso al calendario**.
+
+### Servidor (`push-server/`)
+- `worker.js` – API (`/subscribe`, `/unsubscribe`, `/logged`, `/test`) y cron.
+- `webpush.js` – cifrado aes128gcm y firma VAPID con WebCrypto (sin dependencias).
+- `selftest.html` – autotest del cifrado en el navegador.
+- `deploy.sh` – despliegue con la API de Cloudflare. Necesita, fuera del repositorio,
+  `~/.numerillus/cf-token` (token «Edit Cloudflare Workers») y `~/.numerillus/vapid.json`.
 
 ## Estructura
 ```

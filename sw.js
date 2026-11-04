@@ -1,5 +1,7 @@
 // Service worker de Numerillus: funcionamiento sin conexión y recordatorios.
-const VERSION = 'numerillus-v1';
+const VERSION = 'numerillus-v2';
+const PUSH_SERVER = 'https://numerillus-push.numerillus-7171cc.workers.dev';
+const VAPID_PUBLIC_KEY = 'BIBwGQ7LdDzhFo6nRrtI0ElQ0_YYvBX_itLCZqSwbh7aq_5V6Z7IlJPqiS46EuhlJMmeifPK0DsbEq5ZP5PU2Ys';
 const CONFIG_CACHE = 'numerillus-config';
 const SHELL = [
   './',
@@ -11,6 +13,7 @@ const SHELL = [
   './js/utils.js',
   './js/charts.js',
   './js/notify.js',
+  './js/push.js',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -84,6 +87,34 @@ async function maybeRemind() {
 
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'daily-reminder') event.waitUntil(maybeRemind());
+});
+
+// ---- Notificaciones push enviadas por el servidor ----
+self.addEventListener('push', (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data?.text() }; }
+  event.waitUntil(self.registration.showNotification(data.title || 'Numerillus', {
+    body: data.body || '¿Has apuntado tus gastos de hoy? ✍️',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: data.tag || 'daily-reminder',
+    data: { url: './#home' },
+  }));
+});
+
+// Si el navegador renueva la suscripción, la registramos de nuevo en el servidor.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    const cfg = await readConfig();
+    if (!cfg?.notifications?.enabled) return;
+    const key = Uint8Array.from(atob(VAPID_PUBLIC_KEY.replace(/-/g, '+').replace(/_/g, '/') + '='), (c) => c.charCodeAt(0));
+    const sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    await fetch(PUSH_SERVER + '/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), time: cfg.notifications.time, tz: cfg.tz || 'Europe/Madrid' }),
+    });
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
