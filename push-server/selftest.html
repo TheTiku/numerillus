@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Numerillus push · autotest</title>
+<pre id="out">Ejecutando…</pre>
+<script type="module">
+// Autotest: cifra como el servidor (webpush.js) y descifra como haría el navegador (RFC 8291),
+// y verifica la firma VAPID. Usa claves de prueba generadas aquí (no las reales).
+import { encryptPayload, vapidAuth, b64u } from './webpush.js';
+const out = document.getElementById('out');
+const log = (m) => { out.textContent += '\n' + m; };
+const enc = new TextEncoder();
+const concat = (...a) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let i = 0; for (const x of a) { o.set(x, i); i += x.length; } return o; };
+const hmac = async (k, d) => new Uint8Array(await crypto.subtle.sign('HMAC', await crypto.subtle.importKey('raw', k, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']), d));
+
+try {
+  // "Navegador" receptor
+  const ua = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const uaPub = new Uint8Array(await crypto.subtle.exportKey('raw', ua.publicKey));
+  const auth = crypto.getRandomValues(new Uint8Array(16));
+  const sub = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: b64u.encode(uaPub), auth: b64u.encode(auth) } };
+
+  const msg = JSON.stringify({ title: 'Numerillus', body: '¿Has apuntado tus gastos de hoy? ✍️' });
+  const body = await encryptPayload(sub, msg);
+
+  // Descifrado independiente (lado receptor)
+  const salt = body.slice(0, 16);
+  const rs = new DataView(body.buffer).getUint32(16);
+  const idlen = body[20];
+  const asPub = body.slice(21, 21 + idlen);
+  const ct = body.slice(21 + idlen);
+  const asKey = await crypto.subtle.importKey('raw', asPub, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: asKey }, ua.privateKey, 256));
+  const ikm = await hmac(await hmac(auth, secret), concat(enc.encode('WebPush: info\0'), uaPub, asPub, new Uint8Array([1])));
+  const prk = await hmac(salt, ikm);
+  const cek = (await hmac(prk, concat(enc.encode('Content-Encoding: aes128gcm\0'), new Uint8Array([1])))).slice(0, 16);
+  const nonce = (await hmac(prk, concat(enc.encode('Content-Encoding: nonce\0'), new Uint8Array([1])))).slice(0, 12);
+  const k = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']);
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, k, ct));
+  const delim = pt[pt.length - 1];
+  const text = new TextDecoder().decode(pt.slice(0, -1));
+  log(`cabecera: rs=${rs} idlen=${idlen} salt=${salt.length}B cuerpo=${body.length}B`);
+  log(`descifrado: ${text}`);
+  log(`CIFRADO ${text === msg && delim === 2 && rs === 4096 && idlen === 65 ? 'OK' : 'FALLO'}`);
+
+  // VAPID
+  const vk = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const jwk = await crypto.subtle.exportKey('jwk', vk.privateKey);
+  const pub = new Uint8Array(await crypto.subtle.exportKey('raw', vk.publicKey));
+  const h = await vapidAuth(sub.endpoint, { privateJwk: jwk, publicKey: b64u.encode(pub), subject: 'https://thetiku.github.io/numerillus/' });
+  const [, token, kpart] = h.match(/^vapid t=([^,]+), k=(.+)$/);
+  const [hd, cl, sg] = token.split('.');
+  const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, vk.publicKey, b64u.decode(sg), enc.encode(`${hd}.${cl}`));
+  const claims = JSON.parse(new TextDecoder().decode(b64u.decode(cl)));
+  log(`claims: ${JSON.stringify(claims)}`);
+  log(`VAPID ${ok && kpart === b64u.encode(pub) && claims.aud === 'https://fcm.googleapis.com' && b64u.decode(sg).length === 64 ? 'OK' : 'FALLO'}`);
+} catch (e) {
+  log('ERROR ' + e.message);
+}
+document.title = out.textContent.includes('FALLO') || out.textContent.includes('ERROR') ? 'FALLO' : 'OK';
+</script>
