@@ -56,6 +56,7 @@ const reminderDue = () => {
 };
 
 async function check() {
+  if (getState().meta.pushActive) return; // el servidor push se encarga del aviso
   if (!reminderDue()) return;
   setMeta({ lastReminder: today() });
   if (hasMovementToday()) return; // Ya has apuntado algo hoy: no molestamos.
@@ -71,6 +72,7 @@ export async function syncWithServiceWorker() {
     type: 'config',
     notifications,
     hasMovementToday: hasMovementToday(),
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     lastReminder: getState().meta.lastReminder,
   });
 

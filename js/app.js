@@ -6,6 +6,7 @@ import {
 } from './utils.js';
 import { barChart, donutChart } from './charts.js';
 import * as N from './notify.js';
+import * as P from './push.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -318,7 +319,9 @@ function viewSettings() {
   } else if (perm === 'denied') {
     notifNote = '⚠️ Has bloqueado las notificaciones. Actívalas en los ajustes del navegador para Numerillus.';
   } else if (s.notifications.enabled) {
-    notifNote = `Te avisaremos cada día a las ${s.notifications.time} si aún no has apuntado nada. Los navegadores pueden retrasar el aviso si la app lleva tiempo cerrada; para que suene siempre a la hora exacta, añádelo también al calendario.`;
+    notifNote = S.getState().meta.pushActive
+      ? `✅ Recibirás una notificación cada día a las ${s.notifications.time} (aunque la app esté cerrada) si aún no has apuntado nada ese día.`
+      : `Te avisaremos a las ${s.notifications.time} si aún no has apuntado nada, pero solo cuando la app esté abierta. Para recibir el aviso con la app cerrada, desactiva y vuelve a activar el recordatorio con conexión a internet, o usa «Añadir al calendario».`;
   }
 
   return `
@@ -435,7 +438,11 @@ window.addEventListener('hashchange', () => {
   lastRoute = r;
   render();
 });
-S.subscribe(() => { render(); N.syncWithServiceWorker(); });
+S.subscribe(() => {
+  render();
+  N.syncWithServiceWorker();
+  if (S.hasMovementToday()) P.reportLoggedToday();
+});
 
 function toast(msg) {
   const el = $('#toast');
@@ -723,7 +730,10 @@ const actions = {
 
   'test-notif': async () => {
     const p = await N.requestPermission();
-    if (p === 'granted') { await N.showReminder(true); toast('Notificación enviada'); }
+    if (p === 'granted' && S.getState().meta.pushActive) {
+      try { await P.testPush(); toast('Enviada desde el servidor: debería llegarte en unos segundos'); }
+      catch { await N.showReminder(true); toast('Sin conexión con el servidor: aviso local enviado'); }
+    } else if (p === 'granted') { await N.showReminder(true); toast('Notificación enviada'); }
     else if (p === 'denied') toast('Las notificaciones están bloqueadas en el navegador');
     else toast('Este navegador no permite notificaciones aquí');
     render();
@@ -818,6 +828,7 @@ document.addEventListener('submit', async (e) => {
     const wantsNotif = form.notif.checked;
     let notifEnabled = false;
     if (wantsNotif) notifEnabled = (await N.requestPermission()) === 'granted';
+    if (notifEnabled) P.enablePush('21:00').catch((err) => console.warn('push', err));
     S.updateSettings({
       onboarded: true,
       initialBalance: Number.isFinite(balance) ? balance : 0,
@@ -838,8 +849,16 @@ document.addEventListener('change', async (e) => {
   switch (el.dataset.setting) {
     case 'currency': S.updateSettings({ currency: el.value }); break;
     case 'theme': S.updateSettings({ theme: el.value }); applyTheme(); render(); break;
-    case 'notif-time': S.updateSettings({ notifications: { ...s.notifications, time: el.value || '21:00' } });
-      S.setMeta({ lastReminder: null }); toast(`Aviso a las ${el.value}`); break;
+    case 'notif-time': {
+      const time = el.value || '21:00';
+      S.updateSettings({ notifications: { ...s.notifications, time } });
+      S.setMeta({ lastReminder: null });
+      if (s.notifications.enabled && S.getState().meta.pushActive) {
+        try { await P.enablePush(time); } catch { toast('Sin conexión: la nueva hora se enviará más tarde'); S.setMeta({ pushSynced: null }); break; }
+      }
+      toast(`Aviso a las ${time}`);
+      break;
+    }
     case 'notif-enabled': {
       if (el.checked) {
         const p = await N.requestPermission();
@@ -850,8 +869,20 @@ document.addEventListener('change', async (e) => {
           return;
         }
       }
+      if (el.checked) {
+        try {
+          await P.enablePush(s.notifications.time);
+          toast(`🔔 Te avisaremos cada día a las ${s.notifications.time}`);
+        } catch (err) {
+          console.warn('push', err);
+          S.setMeta({ pushActive: false });
+          toast('Recordatorio activado solo con la app abierta (no se pudo conectar con el servidor)');
+        }
+      } else {
+        await P.disablePush();
+        toast('Recordatorio desactivado');
+      }
       S.updateSettings({ notifications: { ...s.notifications, enabled: el.checked } });
-      toast(el.checked ? `Recordatorio activado a las ${s.notifications.time}` : 'Recordatorio desactivado');
       break;
     }
     case 'import': {
@@ -874,6 +905,12 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', ren
 render();
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').then(() => N.syncWithServiceWorker()).catch((err) => console.warn('SW', err));
+  navigator.serviceWorker.register('sw.js')
+    .then(async () => {
+      N.syncWithServiceWorker();
+      await P.refreshPush();
+      if (S.hasMovementToday()) P.reportLoggedToday();
+    })
+    .catch((err) => console.warn('SW', err));
 }
 N.startReminderLoop();
