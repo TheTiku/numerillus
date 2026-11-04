@@ -3,6 +3,8 @@
 App móvil (web app instalable / PWA) para controlar ingresos, gastos y ahorro.
 Funciona sin conexión y guarda los datos solo en el dispositivo (localStorage).
 
+👉 **Abrir la app:** https://thetiku.github.io/numerillus/
+
 ## Funcionalidades
 - **Saldo inicial** (bienvenida y Ajustes) → el saldo actual se calcula a partir de él.
 - **Ingresos**, **gastos variables** y **ahorro** (aportar / retirar) con categoría, nota y **fecha**.
@@ -14,15 +16,15 @@ Funciona sin conexión y guarda los datos solo en el dispositivo (localStorage).
 - **Recordatorio diario** a la hora elegida + opción de añadirlo al calendario (.ics).
 - **Ajustes**: moneda, tema claro/oscuro, copias de seguridad (exportar/importar), borrar datos.
 
-## Probar en el ordenador
+## Probar en local
+Desde la carpeta del proyecto:
 ```bash
-cd "/Users/vrl/Desktop/App Numerillus" && python3 -m http.server 8765
+python3 -m http.server 8765
 ```
-Abre http://localhost:8765
+Y abre http://localhost:8765
 
 ## Usarla en el móvil
-Las PWA necesitan HTTPS, así que hay que publicar la carpeta en un hosting estático
-(GitHub Pages, Netlify, Cloudflare Pages…). Después, en el móvil:
+Abre https://thetiku.github.io/numerillus/ en el móvil y añádela a la pantalla de inicio:
 - **iPhone (Safari):** Compartir → «Añadir a pantalla de inicio» (necesario para recibir notificaciones).
 - **Android (Chrome):** menú ⋮ → «Instalar aplicación».
 
